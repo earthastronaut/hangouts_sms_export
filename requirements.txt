@@ -1,0 +1,5 @@
+# for interactive development
+ipython
+
+# for web requests
+requests
