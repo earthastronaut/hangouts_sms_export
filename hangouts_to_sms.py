@@ -23,48 +23,6 @@ def read_google_hangouts_message_data(google_takeout_zip_file):
         return data
 
 
-def write_sms_backup(data):
-    pass
-    # <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
-    # <!--File Created By SMS Backup & Restore v10.06.110 on 10/03/2020 16:47:50-->
-
-
-def read_sms_backup(sms_backup_xml_file):
-    """
-
-    SMS Attributes
-
-        * protocol (0 or None):
-        * address (int): Phone number
-        * date (int): unix timestamp
-        * type ():
-        * subject ():
-        * body ():
-        * toa ():
-        * sc_toa ():
-        * service_center ():
-        * read ():
-        * status ():
-        * locked ():
-        * date_sent ():
-        * sub_id ():
-        * readable_date ():
-        * contact_name ():
-
-    """
-    sms_backup_xml = xml.etree.ElementTree.parse(sms_backup_xml_file)
-    with open(sms_backup_xml_file, 'r') as f:
-        f.readline()
-        info = f.readline()
-        # looking for
-        # <!--File Created By SMS Backup & Restore v10.06.110 on 10/03/2020 16:47:50--> # noqa
-        if 'File Created By' not in info:
-            raise ValueError(
-                f'Whoops, looking for a comment line not "{info}"'
-            )
-    return sms_backup_xml.getroot()
-
-
 def validate_keys(d, keys):
     """ Validate dictionary d has exactly keys
     """
@@ -157,6 +115,11 @@ def extract_conversation_meta(conversation):
     user = None
     participants = []
     for participant in convo['participant_data']:
+
+        # participant.type
+        # values: OFF_NETWORK_PHONE, GAIA, UNKNOWN_PHONE_NUMBER, MALFORMED_PHONE_NUMBER  # noqa
+        participant_type = participant['type']
+
         gaia_id = participant['id']['gaia_id']
 
         if gaia_id == user_gaia_id:
@@ -164,13 +127,31 @@ def extract_conversation_meta(conversation):
                 'gaia_id': gaia_id,
                 'phone_number': participant['fallback_name'],
             }
+            continue
+        elif participant_type == 'GAIA':
+            phone_number = participant['phone_number']['e164']
+        elif participant_type == 'OFF_NETWORK_PHONE':
+            phone_number = participant['phone_number']['e164']
+        elif participant_type == 'UNKNOWN_PHONE_NUMBER':
+            # These appear to be anonymous phone numbers. In my sample I only
+            # had 1 and it was a VOICEMAIL which was unimportant
+            logging.warning(
+                'Participant with UNKNOWN_PHONE_NUMBER, currently ignoring these messages'
+            )
+            continue
+        elif participant_type == 'MALFORMED_PHONE_NUMBER':
+            # These appear to be from organizations, e.g. Chase Bank sends a
+            # notification to 88888 number which google says is "malformed"
+            phone_number = participant['fallback_name']
         else:
-            if 'phone_number' not in participant:
-                raise NotImplementedError('whoop! no participant phone number')
-            participants.append({
-                'gaia_id': gaia_id,
-                'phone_number': participant['phone_number']['e164'],
-            })
+            raise NotImplementedError(
+                f'unknown participant type {participant_type}'
+            )
+        participants.append({
+            'gaia_id': gaia_id,
+            'phone_number': phone_number,
+        })
+
     if user is None:
         raise ValueError('Wait! Where is the user?')
     if conversation_type == 'STICKY_ONE_TO_ONE' and len(participants) != 1:
@@ -198,7 +179,7 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
 
     # sender_id
     # keys: gaia_id, chat_id
-    # event['sender_id']
+    sender_gaia_id = event['sender_id']['gaia_id']
 
     # example: '1576525471673269' probably unix
     # timestamp / 1000 / 1000 in nanosec
@@ -206,6 +187,7 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
 
     # keys: 'notification_level', 'user_id.gaia_id', 'user_id.chat_id'
     # event['self_event_state']
+    user_gaia_id = event['self_event_state']['user_id']['gaia_id']
 
     # event_id
     # example: '8QLSTrym2cg92booEdZ5wx'
@@ -276,7 +258,7 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
             #
             #     # segment.link_data.display_url
             #     # optional
-            #     segment_link_display_url = segment_link_data.get('display_url')
+            #     segment_link_url = segment_link_data.get('display_url')
 
             if is_sms:
                 message_data.setdefault('body', '')
@@ -286,14 +268,14 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
                 elif segment_type == 'TEXT':
                     message_data['body'] += segment_text
                 elif segment_type == 'LINK':
-                    # links are stored separately in google hangouts
-                    # but are really just part of the message (or whole message)
+                    # links are stored separately in google hangouts but
+                    # are really just part of the message (or whole message)
                     # so I'm making them part of it with spaces
                     message_data['body'] += f' {segment_text} '
                 else:
                     raise ValueError(f'unknown segment type {segment_type}')
             else:
-                pass
+                raise NotImplementedError('!!!')
 
     # chat_message.attachment
     # required: false
@@ -309,24 +291,39 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
 
         attachment = attachments[0]
 
-        # attachment.embed_item
-        # required: true
-        attachment_embed_item = attachment['embed_item']
-
-        attachment_embed_item_type = attachment_embed_item['type']
-
         # attachment.id
         # required: true
         attachment_id = attachment['id']
 
-        is_sms = False
-        # attachment_embed_item.type = ['PLACE_V2', 'THING_V2', 'THING']
-        # appears to be for maps data but I can ignore, just a regular link
-        if False and attachment_embed_item_type == ['PLUS_PHOTO']:
+        # attachment.embed_item
+        # required: true
+        attachment_embed_item = attachment['embed_item']
+
+        # attachment.embed_item.type
+        # values: ['PLUS_AUDIO_V2'], ['PLUS_PHOTO'], ['PLACE_V2', 'THING_V2', 'THING'] # noqa
+        attachment_embed_item_type = attachment_embed_item['type']
+
+        if is_sms:
+            message_parts.append({
+                'seq': len(message_parts) - 1,
+                'chset': '106',  # I think 106 is utf-8, sometimes 3 which is ascii? # noqa
+                'ct': 'text/plain',
+                'cl': 'text',
+                'text': message_data.get('body', ''),
+            })
+            is_sms = False
+
+        if attachment_embed_item_type == ['PLUS_PHOTO']:
+            # the Google Takeout export does send the photos but there's not
+            # a simple mapping between the json data and those image filenames.
+            # Some of the json data fields have different file format than the
+            # files available (jpg vs png).
             url = attachment_embed_item['plus_photo']['url']
+
             resp = requests.get(url)
             content_type = resp.headers['Content-Type']
-            options = ['image/jpeg', 'image/png']
+            options = ['image/jpeg', 'image/png', 'image/gif']
+            # 'text/plain'
             if content_type not in options:
                 raise ValueError(
                     f'unknown content type {content_type} not in {options}'
@@ -340,8 +337,26 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
                 'cl': 'image',
                 'data': image_data
             })
-
-            # TODO: raise NotImplementedError('chset is actually unknown!!!')
+        elif attachment_embed_item_type == ['PLACE_V2', 'THING_V2', 'THING']:
+            # This appears to be for maps data but I can ignore,
+            # just a regular link
+            pass
+        elif attachment_embed_item_type == ['PLUS_AUDIO_V2']:
+            # All of these appear to be VOICEMAIL with associated text.
+            # Let's confirm.
+            if event_type != 'VOICEMAIL':
+                raise ValueError(
+                    f'Unknown event type for PLUS_AUDIO_V2 called {event_type}'
+                )
+            if message_content['segment'][0]['type'] != 'TEXT':
+                raise NotImplementedError(
+                    f'Need to account for VOICEMAIL that does not have text',
+                )
+        else:
+            raise NotImplementedError(
+                f'You need to handle embed item '
+                f'type = {attachment_embed_item_type}'
+            )
 
     # chat_message.annotation
     # required: false
@@ -360,7 +375,7 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
         # annotation.type
         # type: int
         # description:
-        annotation_type = annotation['type']
+        # annotation_type = annotation['type']
 
         # annotation.value
         # type: str
@@ -369,14 +384,25 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
 
         if annotation_value != '':
             raise NotImplementedError(
-                f'Oh! You found a non-empty annotation {annotation_value}'
+                f'Oh! You found a non-empty annotation "{annotation_value}". '
+                f'Please figure out how to handle this.'
             )
 
-    n = conversation_meta['participants_count']
-    if is_sms and n > 1:
+    if is_sms and conversation_meta['participants_count'] > 1:
         # actually converting from google hangouts sms to mms
         is_sms = False
-        raise NotImplementedError(f'Convert participants')
+        message_parts.append({
+            'seq': len(message_parts) - 1,
+            'chset': '106',  # I think 106 is utf-8, sometimes 3 which is ascii? # noqa
+            'ct': 'text/plain',
+            'cl': 'text',
+            'text': message_data.get('body', ''),
+        })
+
+    if sender_gaia_id == user_gaia_id:
+        sent_type = 2  # Sent
+    else:
+        sent_type = 1  # Received
 
     if is_sms:
         assert conversation_meta['participants_count'] == 1
@@ -391,8 +417,7 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
             'date': date,
 
             # type (int): 1 = Received, 2 = Sent
-            # TODO: WHICH IS IT!!!!!
-            'type': 1,
+            'type': sent_type,
 
             'body': message_data['body'],
 
@@ -410,6 +435,8 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
             'sub_id': -1,
         }
     else:
+        conversation_meta['participants'][0]['phone_number']
+
         raise NotImplementedError('hehe')
         return {
             'tag': 'mms',
@@ -420,7 +447,7 @@ def transform_hangouts_event_to_backup(event, conversation_meta):
             'ct_t': 'application/vnd.wap.multipart.related',
 
             # Type of message, 1 = Received, 2 = Sent
-            'msg_box': 1,
+            'msg_box': sent_type,
 
             # rr (): The read-report of the message. {'null': 3, '129': 8}
             'rr': 'null',
@@ -489,3 +516,49 @@ def transform_conversations_to_xml_backup_messages(google_hangouts_data):
         element.attrib = event
         xml_backup_messages.append(element)
     return xml_backup_messages
+
+
+def write_sms_backup(data):
+    pass
+    # <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    # <!--File Created By SMS Backup & Restore v10.06.110 on
+    # 10/03/2020 16:47:50-->
+
+
+def read_sms_backup(sms_backup_xml_file):
+    """
+
+    SMS Attributes
+
+        * protocol (0 or None):
+        * address (int): Phone number
+        * date (int): unix timestamp
+        * type ():
+        * subject ():
+        * body ():
+        * toa ():
+        * sc_toa ():
+        * service_center ():
+        * read ():
+        * status ():
+        * locked ():
+        * date_sent ():
+        * sub_id ():
+        * readable_date ():
+        * contact_name ():
+
+    """
+    sms_backup_xml = xml.etree.ElementTree.parse(sms_backup_xml_file)
+    with open(sms_backup_xml_file, 'r') as f:
+        f.readline()
+        info = f.readline()
+        # looking for
+        # <!--File Created By SMS Backup & Restore v10.06.110 on 10/03/2020 16:47:50--> # noqa
+        if 'File Created By' not in info:
+            raise ValueError(
+                f'Whoops, looking for a comment line not "{info}"'
+            )
+    return sms_backup_xml.getroot()
+
+
+ml.getroot()
