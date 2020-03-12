@@ -20,6 +20,9 @@ logging.basicConfig(
 log = logging.getLogger(__file__)
 
 
+# TODO: Split the google parts into a hangouts.py
+
+
 def read_google_hangouts_message_data(google_takeout_zip_file):
     """ Read the zip file [Google Takeout](https://takeout.google.com/)
     generates and extract the `Takeout/Hangouts/Hangouts.json` data
@@ -418,6 +421,9 @@ def parse_hangouts_event(event):
     return parsed
 
 
+# TODO: Split the SMS Backup and Restore parts into a sms_backup_restore.py
+
+
 def xml_escape_text(text):
     """ Escape xml text for SMS Backup & Restore
     """
@@ -715,26 +721,119 @@ def write_sms_backup_and_restore(smses):
 
 
 def read_sms_backup_and_restore(sms_backup_xml_file):
-    """
+    """ Read XML file from SMS Backup & Restore
 
-    SMS Attributes
+    https://synctech.com.au/sms-backup-restore/fields-in-xml-backup-files/
 
-        * protocol (0 or None):
+
+    # Basic XML Structure
+
+    Most of data is stored in attributes
+
+    ```
+    <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <smses ...attributes>
+        <sms ...attributes... />
+        <mms ...attributes... >
+            <parts>
+                <part ...attributes... />
+            </parts>
+            <addrs>
+                <addr ...attributes... />
+            </addrs>
+        </mms>
+        ...
+    </smes>
+    ```
+
+    # SMS Attributes 
+
+    Tag sms has the following attributes
+
+        * protocol (0): Some protocol number which i found always '0'
         * address (int): Phone number
-        * date (int): unix timestamp
-        * type ():
-        * subject ():
-        * body ():
-        * toa ():
-        * sc_toa ():
-        * service_center ():
-        * read ():
-        * status ():
-        * locked ():
-        * date_sent ():
-        * sub_id ():
-        * readable_date ():
-        * contact_name ():
+        * date (int): The Java date representation (including millisecond) of 
+            the time when the message was sent/received. Check out 
+            www.epochconverter.com for information on how 
+            to do the conversion from other languages to Java.
+        * type (int): 1 = Received, 2 = Sent, 3 = Draft, 4 = Outbox, 5 = Failed, 6 = Queued.  # noqa
+            * 1 : mostly voicemail messages        
+            * 2 : text message
+
+        * body (string):
+        * read (bool 0/1): Has message been read
+        * date_sent (int): unix timestamp milliseconds of when message is sent
+        * readable_date (string): Optional. Same as date.
+        * contact_name (string): Optional. Name of the contact. 
+        * subject (string): Subject of the message, its always 'null' in case of SMS messages.
+        * toa (string): n/a, defaults to null. IGNORE
+        * sc_toa (string): n/a, defaults to null. IGNORE
+        * service_center (string):  The service center for the received message, null in case of sent messages. IGNORE. # noqa
+        * status (int): None = -1, Complete = 0, Pending = 32, Failed = 64. IGNORE currently all -1. # noqa
+        * locked (bool 0/1): TODO: ignore for now {'0': 102}
+        * sub_id (int): TODO: ignore for now, Most are '-1' {'-1': 101, '1': 1} the 1 is a voicemail # noqa 
+
+    # MMS Attributes
+
+        * date (int): The Java date representation (including millisecond) of the time when the message was sent/received. Check out www.epochconverter.com for information on how to do the conversion from other languages to Java.
+        * ct_t (): The Content-Type of the message, usually "application/vnd.wap.multipart.related"
+        * msg_box (): The type of message, 1 = Received, 2 = Sent, 3 = Draft, 4 = Outbox
+        * rr (): The read-report of the message. {'null': 3, '129': 8}
+        * sub (): The subject of the message, if present.
+        * read_status (): The read-status of the message.
+        * address (): The phone number of the sender/recipient.
+        * m_id (): The Message-ID of the message
+        * read (): Has the message been read
+        * m_size (): The size of the message.
+        * m_type (): The type of the message defined by MMS spec. 132 or 128
+        * readable_date (string): Optional. Same as date.
+        * contact_name (string): Optional. Name of the contact.
+
+        * seen (bool 0/1):
+        * sub_cs (): 'null'
+        * resp_st (): 'null'
+        * retr_st (): 'null'
+        * d_tm (): 'null'
+        * text_only (bool 0/1):
+        * exp (): ?? 'null' and '604800'
+        * locked (0/1):
+        * st (): 'null'
+        * retr_txt_cs (): 'null'
+        * retr_txt (): 'null'
+        * creator (): e.g. com.android.providers.telephony, xyz.klinker.messenger
+        * date_sent (): Java date when sent
+        * rpt_a (): 'null'
+        * ct_cls (): 'null'
+        * pri (): ?? 'null' and '129'
+        * sub_id (): '-1'
+        * tr_id (): ?? many values and some 'null'
+        * resp_txt (): 'null'
+        * ct_l (): ?? many values and some 'null'
+        * m_cls (): ?? 'null' and 'personal'
+        * d_rpt (): 'null' and '129'
+        * v (): '18' ???
+
+    # MMS Part Attributes
+
+        * seq (int): The order of the part. Starting at -1
+        * ct (): The content type of the part. e.g. application/smil, text/plain, image/jpeg, image/png
+        * name (): The name of the part. e.g. smil.xml, text.000000.txt, null
+        * chset (): The charset of the part. e.g. null, 106, 3
+        * cl (): The content location of the part. e.g. smil.xml, text.000000.txt, image, text
+        * text (): The text content of the part.
+        * data (): OPTIONAL. The base64 encoded binary content of the part.
+
+        * cd ():
+        * fn ():
+        * cid ():
+        * ctt_s ():
+        * ctt_t ():
+
+    # MMS Addrs Attributes
+
+        * address (): The phone number of the sender/recipient.
+        * type (): The type of address, 129 = BCC, 130 = CC, 151 = To, 137 = From
+        * charset (): Character set of this entry. Example: 3, 106. WHAT ARE THESE??
 
     """
     sms_backup_xml = xml.etree.ElementTree.parse(sms_backup_xml_file)
@@ -748,3 +847,6 @@ def read_sms_backup_and_restore(sms_backup_xml_file):
                 f'Whoops, looking for a comment line not "{info}"'
             )
     return sms_backup_xml.getroot()
+
+
+# TODO: Create a file which reads google, merges and writes
