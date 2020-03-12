@@ -1,0 +1,8 @@
+untracked_*
+
+# sublimetext
+*.sublime-workspace
+*.sublime-project
+
+# python
+__pycache__
