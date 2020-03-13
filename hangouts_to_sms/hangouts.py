@@ -10,7 +10,30 @@ import random
 import urllib
 
 
+MESSAGE_ERROR_IMAGE_NOT_FOUND = 'IMAGE NOT FOUND'
+MESSAGE_ERROR_TYPES = [
+    MESSAGE_ERROR_IMAGE_NOT_FOUND
+]
+MESSAGE_ERROR_DELIM = ':: '
+
 log = logging.getLogger(__name__)
+
+
+def generate_error_text(error_type, error_msg):
+    if error_type not in MESSAGE_ERROR_TYPES:
+        raise ValueError(
+            f'error_type {error_type} not in {MESSAGE_ERROR_TYPES}'
+        )
+    if MESSAGE_ERROR_DELIM in error_msg:
+        raise ValueError(
+            f'error_msg can not contain delimiter\n'
+            f'"{MESSAGE_ERROR_DELIM}" in "{error_msg}"'
+        )
+    return MESSAGE_ERROR_DELIM.join(
+        'ERROR',
+        error_type,
+        error_msg,
+    )
 
 
 def read_google_hangouts_message_data(google_takeout_zip_file):
@@ -218,7 +241,10 @@ def retrieve_image_data(url, event_id, max_backoff_time=10):
                 return {
                     'error': error,
                     'content_type': 'text/plain',
-                    'text': f'IMAGE NOT FOUND: {url}',
+                    'text': generate_error_text(
+                        MESSAGE_ERROR_IMAGE_NOT_FOUND,
+                        url,
+                    )
                 }
             else:
                 raise
