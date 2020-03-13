@@ -104,3 +104,5 @@ def main(pargs=None):
     sms_backup_and_restore.write_sms_backup_and_restore(
         smses_google, output_xml_file,
     )
+
+    sms_backup_and_restore.smses_stats(smses_google, log_results=True)

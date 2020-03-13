@@ -1,4 +1,5 @@
 import datetime
+from collections import Counter
 import re
 import xml.etree.ElementTree
 import xml.sax.saxutils
@@ -474,3 +475,53 @@ def transform_hangouts_data(google_hangouts_data, message_count=None):
             break
     root.attrib['count'] = str(len(root))
     return root
+
+
+def smses_stats(smses, log_results=False):
+    """ Count some statistics about the SMS Backup & Restore smses messages
+    """
+
+    counter = Counter()
+    contacts_set = set()
+    for i, msg in enumerate(smses):
+        counter['messages'] += 1
+
+        if msg.tag == 'sms':
+            contacts_set.add(msg.attrib['address'])
+
+            sent_type = msg.attrib['type']
+
+            body = msg.attrib['body']
+            # special error handling
+            if body.startswith('ERROR'):
+                _, error_type, error_msg = body.split(hangouts.MESSAGE_ERROR_DELIM)  # noqa
+                if error_type == hangouts.MESSAGE_ERROR_IMAGE_NOT_FOUND:
+                    counter['mms'] += 1
+                    counter[error_type] += 1
+                else:
+                    raise NotImplementedError(
+                        f'fix counter for this error {error_type}'
+                    )
+            else:
+                counter['sms'] += 1
+
+        else:
+            counter['mms'] += 1
+            sent_type = msg.attrib['msg_box']
+            for addr in msg[1]:
+                contacts_set.add(addr.attrib['address'])
+
+        if sent_type == '1':
+            counter['received'] += 1
+        elif sent_type == '2':
+            counter['sent'] += 1
+        else:
+            raise ValueError(f'unknown {sent_type}')
+
+    counter['contacts'] += len(contacts_set)
+
+    if log_results:
+        counter_fmt = '\n'.join([f'{k}:{v}' for k, v in counter.items()])
+        log.info(f'STATS\n{counter_fmt}')
+
+    return counter
