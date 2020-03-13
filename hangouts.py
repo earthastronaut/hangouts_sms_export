@@ -735,6 +735,7 @@ def transform_hangouts_to_sms_backup_and_restore(google_hangouts_data, message_c
 
     """
     root = xml.etree.ElementTree.Element('smses')
+    root.tail = '\n'
     root.attrib = {
         'count': '-1',
         'backup_set': str(uuid.uuid4()),
@@ -762,7 +763,7 @@ def transform_hangouts_to_sms_backup_and_restore(google_hangouts_data, message_c
     return root
 
 
-def write_sms_backup_and_restore(smses, filepath):
+def write_sms_backup_and_restore(xml_etree, filepath):
     """ Export to SMS Backup & Restore File
     """
     log.info(f'writing to {filepath}')
@@ -775,7 +776,13 @@ def write_sms_backup_and_restore(smses, filepath):
             f" By EarthAstronaut at {now}-->\n"
         )
 
-    smses_tree = xml.etree.ElementTree.ElementTree(smses)
+    # TODO: Pretty print this. I don't know why the default write doesn't
+    # have this option. I don't like how lxml does it. Especially for a large
+    # file it makes no sense to create a giant string first then write it out.
+    # better way is to recurse through the elements and append each one to the
+    # file with the correct indentation. But that's too much work and
+    # the SMS Backup & Restore didn't care.
+    smses_tree = xml.etree.ElementTree.ElementTree(xml_etree)
     with open(filepath, 'ab') as fptr:
         smses_tree.write(fptr, encoding='utf-8')
 
@@ -915,4 +922,6 @@ def read_sms_backup_and_restore(sms_backup_xml_file):
             f'BUT I\'LL GIVE IT A TRY!!!!'
         )
 
-    return sms_backup_xml.getroot()
+    root = sms_backup_xml.getroot()
+    root.tail = '\n'
+    return root
