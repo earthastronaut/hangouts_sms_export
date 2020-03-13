@@ -1,22 +1,21 @@
+import os
 import datetime
+import re
 import json
 import xml.etree.ElementTree
 import xml.sax.saxutils
 import zipfile
 import logging
 import base64
+import tempfile
 import copy
 import uuid
+import time
+import random
 
 import requests
 
-logging.basicConfig(
-    format=(
-        "{'time':'%(asctime)s', 'name': '%(name)s',"
-        "'level': '%(levelname)s', 'message': '%(message)s'}"
-    ),
-    level='INFO',
-)
+
 log = logging.getLogger(__file__)
 
 
@@ -189,6 +188,57 @@ def parsed_hangouts_conversation_meta(conversation):
     }
 
 
+def retrieve_image_data(url, cache_key=None, max_backoff_time=10):
+    if cache_key:
+        cache_file = os.path.join(
+            tempfile.gettempdir(),
+            f'hangouts_to_sms_{cache_key}.json'
+        )
+        if os.path.exists(cache_file):
+            log.debug(f'Image from cache file {cache_file}')
+            with open(cache_file) as f:
+                return json.load(f)
+
+    log.debug('Downloading image')
+
+    retries = 0
+    while True:
+        retries += 1
+        resp = requests.get(url)
+        if resp.status_code == 500:
+            delay = (0.5 * retries) ** 2 + random.randint(0, 1000) / 1000.0
+            if delay > max_backoff_time:
+                raise ValueError(
+                    f'Reached maximum backoff time after {retries} retries'
+                )
+            time.sleep(delay)
+        elif resp.status_code >= 400:
+            # note: the image url contains a token so don't log it
+            raise ValueError(
+                f'Received {resp.status_code} status code from image url'
+            )
+        else:
+            break
+
+    content_type = resp.headers['Content-Type']
+    options = ['image/jpeg', 'image/png', 'image/gif']
+    # 'text/plain'
+    if content_type not in options:
+        raise ValueError(
+            f'unknown content type {content_type} not in {options}'
+        )
+    image_data = base64.b64encode(resp.content).decode('ascii')
+    data = {
+        'content_type': content_type,
+        'data': image_data,
+    }
+    if cache_key:
+        log.debug(f'Writing cache file {cache_file}')
+        with open(cache_file, 'w') as f:
+            json.dump(data, f)
+    return data
+
+
 def parse_hangouts_event(event):
     """ Parse relevant information from the Google Hangouts JSON
 
@@ -356,19 +406,8 @@ def parse_hangouts_event(event):
 
             log.info(f'downloading image')
 
-            resp = requests.get(url)
-            content_type = resp.headers['Content-Type']
-            options = ['image/jpeg', 'image/png', 'image/gif']
-            # 'text/plain'
-            if content_type not in options:
-                raise ValueError(
-                    f'unknown content type {content_type} not in {options}'
-                )
-            image_data = base64.b64encode(resp.content).decode('ascii')
-            parsed['parts'].append({
-                'content_type': content_type,
-                'data': image_data,
-            })
+            image_data = retrieve_image_data(url, cache_key=parsed['event_id'])
+            parsed['parts'].append(image_data)
         elif attachment_embed_item_type == ['PLACE_V2', 'THING_V2', 'THING']:
             # This appears to be for maps data but I can ignore,
             # just a regular link
@@ -452,9 +491,9 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
 
     sender_gaia_id = parsed_hangouts_event['sender_gaia_id']
     if sender_gaia_id == parsed_hangouts_event['user_gaia_id']:
-        sent_type = 2  # Sent
+        sent_type = '2'  # Sent
     else:
-        sent_type = 1  # Received
+        sent_type = '1'  # Received
 
     if len(parsed_hangouts_event['parts']) == 0:
         log.warning(
@@ -494,9 +533,9 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
             'toa': 'null',
             'sc_toa': 'null',
             'read': '1',  # Has message been read 0 or 1
-            'status': -1,
-            'locked': 0,
-            'sub_id': -1,
+            'status': '-1',
+            'locked': '0',
+            'sub_id': '-1',
         }
         return [element_sms]
 
@@ -509,7 +548,7 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
         'ct_t': 'application/vnd.wap.multipart.related',
 
         # Type of message, 1 = Received, 2 = Sent
-        'msg_box': sent_type,
+        'msg_box': str(sent_type),
 
         # rr (): The read-report of the message. {'null': 3, '129': 8}
         'rr': 'null',
@@ -533,23 +572,23 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
         # m_type (): The type of the message defined by MMS spec.
         # message_data['m_type'] = 128  # images
         # message_data['m_type'] = 132  # text
-        'm_type': -1,
+        'm_type': 'null',
     }
 
     element_addrs = xml.etree.ElementTree.Element('addrs')
     for participant in conversation_meta['participants']:
         if participant['gaia_id'] == sender_gaia_id:
             # The type of address, 129 = BCC, 130 = CC, 151 = To, 137 = From
-            ptype = 137
+            ptype = '137'
         else:
-            ptype = 151
+            ptype = '151'
         element_addr = xml.etree.ElementTree.Element('addr')
         element_addr.attrib = {
-            'address': participant['phone_number'],
-            'type': ptype,
+            'address': str(participant['phone_number']),
+            'type': str(ptype),
             # TODO: Determine if 3 or 106. I see both values but no logic for
             # which to use. Just assuming 3.
-            'charset': 3,
+            'charset': '3',
         }
         element_addrs.append(element_addr)
 
@@ -597,7 +636,7 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
             mms = copy.deepcopy(element_mms)
             mms.attrib.update({
                 'm_size': str(len(parsed_part['data'])),
-                'm_type': 128,
+                'm_type': '128',
             })
             mms.append(element_parts)
             mms.append(copy.deepcopy(element_addrs))
@@ -650,7 +689,7 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
             mms = copy.deepcopy(element_mms)
             mms.attrib.update({
                 'm_size': str(len(text.encode('utf-8'))),
-                'm_type': 151,
+                'm_type': '151',
             })
             mms.append(element_parts)
             mms.append(copy.deepcopy(element_addrs))
@@ -667,7 +706,7 @@ def transform_parsed_hangouts_event_to_sms_backup_and_restore(parsed_hangouts_ev
     return messages
 
 
-def transform_hangouts_conversation_to_sms_backup_and_restore(conversation):
+def transform_hangouts_conversation_to_sms_backup_and_restore(conversation, message_counter=0, message_count=None):  # noqa
     """ Transform a google hangouts conversation into the SMS Backup & Restore
     xml messages
 
@@ -685,10 +724,13 @@ def transform_hangouts_conversation_to_sms_backup_and_restore(conversation):
             parsed_event, conversation_meta
         )
         conversation_messages.extend(messages)
+        message_counter += 1
+        if message_count and message_counter > message_count:
+            break
     return conversation_messages
 
 
-def transform_hangouts_to_sms_backup_and_restore(google_hangouts_data):
+def transform_hangouts_to_sms_backup_and_restore(google_hangouts_data, message_count=None):
     """ Transform a Google Hangouts Takout data into the SMS Backup & Restore
 
     """
@@ -703,21 +745,39 @@ def transform_hangouts_to_sms_backup_and_restore(google_hangouts_data):
     log.info(
         f'extracting {len(conversations)} conversations'
     )
+    message_counter = 0
 
     for conversation in conversations:
         messages = transform_hangouts_conversation_to_sms_backup_and_restore(
-            conversation
+            conversation,
+            message_counter=message_counter, message_count=message_count,
         )
         root.extend(messages)
-    root.attrib['count'] = len(root)
+        if message_count and message_counter > message_count:
+            logging.debug(
+                f'reached messaged limit {message_count} with {message_counter}'
+            )
+            break
+    root.attrib['count'] = str(len(root))
     return root
 
 
-def write_sms_backup_and_restore(smses):
-    pass
-    # <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
-    # <!--File Created By SMS Backup & Restore v10.06.110 on
-    # 10/03/2020 16:47:50-->
+def write_sms_backup_and_restore(smses, filepath):
+    """ Export to SMS Backup & Restore File
+    """
+    log.info(f'writing to {filepath}')
+
+    with open(filepath, 'w') as fptr:
+        now = datetime.datetime.now().isoformat()
+        fptr.write("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>\n")
+        fptr.write(
+            f"<!--File Created For SMS Backup & Restore v10.06.110 "
+            f" By EarthAstronaut at {now}-->\n"
+        )
+
+    smses_tree = xml.etree.ElementTree.ElementTree(smses)
+    with open(filepath, 'ab') as fptr:
+        smses_tree.write(fptr, encoding='utf-8')
 
 
 def read_sms_backup_and_restore(sms_backup_xml_file):
@@ -846,7 +906,13 @@ def read_sms_backup_and_restore(sms_backup_xml_file):
             raise ValueError(
                 f'Whoops, looking for a comment line not "{info}"'
             )
+    log.info(f'Read file {sms_backup_xml}\n{info}')
+    major, minor, patch = re.match(r'.*v(\d*)\.(\d*)\.(\d*)', info).groups()
+    if major != '10' and minor != '06':
+        log.warning(
+            f'This script was created using SMS Backup & Restore v10.06.110 '
+            f'and may not work with v{major}.{minor}.{patch} \n'
+            f'BUT I\'LL GIVE IT A TRY!!!!'
+        )
+
     return sms_backup_xml.getroot()
-
-
-# TODO: Create a file which reads google, merges and writes
