@@ -54,7 +54,7 @@ def configure_logging(level):
         },
         'root': {
             'level': level,
-            'handlers': ['console'],
+            'handlers': [],
         },
         'loggers': {
             'hangouts_to_sms': {
@@ -66,15 +66,22 @@ def configure_logging(level):
 
 
 def main(pargs=None):
+
+    # ################# PARAMETERS ##################
+
     if pargs is None:
         pargs = parser.parse_args()
-    configure_logging(pargs.loglevel)
 
     # extract parameters
     google_hangouts_zip_file = pargs.google_hangouts_zip_file
     message_count = pargs.message_count
     existing_sms_backup_restore_file = pargs.existing
     output_xml_file = pargs.output
+    loglevel = pargs.loglevel
+
+    configure_logging(loglevel)
+
+    # ################# MAIN ##################
 
     with open(output_xml_file, 'w') as f:
         f.write('this is a check')
