@@ -1,5 +1,0 @@
-# for interactive development
-ipython
-
-# for web requests to fetch images
-requests

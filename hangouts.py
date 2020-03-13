@@ -12,8 +12,7 @@ import copy
 import uuid
 import time
 import random
-
-import requests
+import urllib
 
 
 log = logging.getLogger(__file__)
@@ -204,30 +203,32 @@ def retrieve_image_data(url, cache_key=None, max_backoff_time=10):
     retries = 0
     while True:
         retries += 1
-        resp = requests.get(url)
-        if resp.status_code == 500:
+        with urllib.request.urlopen(url) as resp:
+            content = resp.read()
+
+        if resp.status == 500:
             delay = (0.5 * retries) ** 2 + random.randint(0, 1000) / 1000.0
             if delay > max_backoff_time:
                 raise ValueError(
                     f'Reached maximum backoff time after {retries} retries'
                 )
             time.sleep(delay)
-        elif resp.status_code >= 400:
+        elif resp.status >= 400:
             # note: the image url contains a token so don't log it
             raise ValueError(
-                f'Received {resp.status_code} status code from image url'
+                f'Received {resp.status} status code from image url'
             )
         else:
             break
 
-    content_type = resp.headers['Content-Type']
+    content_type = resp.headers['content-type']
     options = ['image/jpeg', 'image/png', 'image/gif']
     # 'text/plain'
     if content_type not in options:
         raise ValueError(
             f'unknown content type {content_type} not in {options}'
         )
-    image_data = base64.b64encode(resp.content).decode('ascii')
+    image_data = base64.b64encode(content).decode('ascii')
     data = {
         'content_type': content_type,
         'data': image_data,
