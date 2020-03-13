@@ -8,7 +8,7 @@ import uuid
 
 from hangouts_to_sms import hangouts
 
-log = logging.getLogger(__file__)
+log = logging.getLogger(__name__)
 
 
 def write_sms_backup_and_restore(xml_etree, filepath):

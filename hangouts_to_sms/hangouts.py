@@ -10,7 +10,7 @@ import random
 import urllib
 
 
-log = logging.getLogger(__file__)
+log = logging.getLogger(__name__)
 
 
 def read_google_hangouts_message_data(google_takeout_zip_file):

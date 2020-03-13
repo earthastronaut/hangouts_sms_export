@@ -1,6 +1,7 @@
 #!env python
 import argparse
 import logging
+import logging.config
 
 from hangouts_to_sms import hangouts, sms_backup_and_restore
 
@@ -31,18 +32,19 @@ parser.add_argument(
 )
 
 
-def configure_logging(pargs):
+def configure_logging(level):
     logging.config.dictConfig({
         'version': 1,
-        'disable_existing_logging': True,
         'formatters': {
-            'default': (
-                "{{{level}': '{levelname}', 'time':'{asctime}', \n"
-                "'name': '{name}', 'lineno': '{lineno}, \n"
-                "'message': '{message}'}}"
-            ),
-            'datefmt': '%Y-%m-%dT%H:%M:%S',
-            'style': '{',
+            'default': {
+                'format': (
+                    "{{'level': '{levelname}', 'time':'{asctime}', \n"
+                    "'name': '{name}', 'lineno': '{lineno}, \n"
+                    "'message': '{message}'}}"
+                ),
+                'datefmt': '%Y-%m-%dT%H:%M:%S',
+                'style': '{',
+            }
         },
         'handlers': {
             'console': {
@@ -51,15 +53,22 @@ def configure_logging(pargs):
             }
         },
         'root': {
-            'level': pargs.loglevel,
-            'handlers': ['default'],
+            'level': level,
+            'handlers': ['console'],
         },
+        'loggers': {
+            'hangouts_to_sms': {
+                'level': level,
+                'handlers': ['console'],
+            }
+        }
     })
 
 
-def main():
-    pargs = parser.parse_args()
-    configure_logging(pargs)
+def main(pargs=None):
+    if pargs is None:
+        pargs = parser.parse_args()
+    configure_logging(pargs.loglevel)
 
     # extract parameters
     google_hangouts_zip_file = pargs.google_hangouts_zip_file
