@@ -42,3 +42,11 @@ python -m hangouts_to_sms \
 	--existing /.../sms-20200202202002.xml
 ```
 
+
+# Story
+
+My partner switched away from Hangouts because it's no longer supported. They went to use another SMS app (PulseSMS) but could not recover the thousands of messages from Hangouts. I said "That will not stand!". I wrote this code, which leverages the "SMS Backup & Restore" app, to import the Google Hangouts data into regular SMS/MMS. I was successful! I received many hugs when I restored the thousands of SMS and MMS messages to their phone. 
+
+I hope this code helps you on your journey to recover trapped data from Hangouts. If "SMS Backup & Restore" is inadequate I tried to make this flexible to add your own transformations (also see [hangouts_to_sms](https://github.com/adein/hangouts_to_sms) which leverages the "Titanium Backup" app). 
+
+May you be victorious in all you strive towards!
