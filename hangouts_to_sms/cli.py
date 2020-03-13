@@ -2,7 +2,7 @@
 import argparse
 import logging
 
-from hangouts_to_sms import hangouts
+from hangouts_to_sms import hangouts, sms_backup_and_restore
 
 
 parser = argparse.ArgumentParser()
@@ -73,17 +73,18 @@ def main():
     # google convert
     google_hangouts_data = hangouts.read_google_hangouts_message_data(
         google_hangouts_zip_file)
-    smses_google = hangouts.transform_hangouts_to_sms_backup_and_restore(
+    # TODO: maybe separate out parsing google data from transforming
+    smses_google = sms_backup_and_restore.transform_hangouts_data(
         google_hangouts_data, message_count=message_count)
 
     # append existing if provided
     if existing_sms_backup_restore_file:
-        smses = hangouts.read_sms_backup_and_restore(
+        smses = sms_backup_and_restore.read_sms_backup_and_restore(
             existing_sms_backup_restore_file)
 
         smses_google.extend(smses)
 
     smses_google.attrib['count'] = str(len(smses_google))
-    hangouts.write_sms_backup_and_restore(
+    sms_backup_and_restore.write_sms_backup_and_restore(
         smses_google, output_xml_file,
     )
