@@ -179,7 +179,8 @@ def parsed_hangouts_conversation_meta(conversation):
     }
 
 
-def retrieve_image_data(url, cache_key=None, max_backoff_time=10):
+def retrieve_image_data(url, event_id, max_backoff_time=10):
+    cache_key = event_id
     if cache_key:
         cache_file = os.path.join(
             tempfile.gettempdir(),
@@ -190,31 +191,42 @@ def retrieve_image_data(url, cache_key=None, max_backoff_time=10):
             with open(cache_file) as f:
                 return json.load(f)
 
-    log.debug('Downloading image')
-
     retries = 0
     while True:
         retries += 1
-        with urllib.request.urlopen(url) as resp:
-            content = resp.read()
+        try:
+            with urllib.request.urlopen(url) as resp:
+                content = resp.read()
+        except urllib.error.HTTPError as error:
+            if error.code == 500:
+                delay = (0.5 * retries) ** 2 + random.randint(0, 1000) / 1000.0
+                if delay > max_backoff_time:
+                    error.msg = (
+                        f'Reached maximum backoff time after {retries} retries'
+                    )
+                    raise
 
-        if resp.status == 500:
-            delay = (0.5 * retries) ** 2 + random.randint(0, 1000) / 1000.0
-            if delay > max_backoff_time:
-                raise ValueError(
-                    f'Reached maximum backoff time after {retries} retries'
+                log.debug(
+                    f'URL returned 500, retry {retries} delaying {delay}'
                 )
-            time.sleep(delay)
-        elif resp.status >= 400:
-            # note: the image url contains a token so don't log it
-            raise ValueError(
-                f'Received {resp.status} status code from image url'
-            )
-        else:
-            break
+                time.sleep(delay)
+                continue
+            elif error.code == 404:
+                log.warning(
+                    f'Image for event_id = {event_id} received 404 error'
+                )
+                return {
+                    'error': error,
+                    'content_type': 'text/plain',
+                    'text': f'IMAGE NOT FOUND: {url}',
+                }
+            else:
+                raise
+        break
 
     content_type = resp.headers['content-type']
     options = ['image/jpeg', 'image/png', 'image/gif']
+    log.debug(f'response returned {resp.status} with {content_type}')
     # 'text/plain'
     if content_type not in options:
         raise ValueError(
@@ -282,7 +294,8 @@ def parse_hangouts_event(event):
 
     # event_id
     # example: '8QLSTrym2cg92booEdZ5wx'
-    parsed['event_id'] = event['event_id']
+    event_id = event['event_id']
+    parsed['event_id'] = event_id
 
     # advances_sort_timestamp
     # type: bool
@@ -397,10 +410,11 @@ def parse_hangouts_event(event):
             # files available (jpg vs png).
             url = attachment_embed_item['plus_photo']['url']
 
-            log.info(f'downloading image')
+            log.info(f'Downloading image event id {event_id}')
 
-            image_data = retrieve_image_data(url, cache_key=parsed['event_id'])
-            parsed['parts'].append(image_data)
+            parsed['parts'].append(
+                retrieve_image_data(url, event_id)
+            )
         elif attachment_embed_item_type == ['PLACE_V2', 'THING_V2', 'THING']:
             # This appears to be for maps data but I can ignore,
             # just a regular link
